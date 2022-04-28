@@ -20,6 +20,7 @@ from urllib.request import URLError, urlopen
 import webcolors
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from cssutils import parseStyle
 
 from ebookmaker.ebookmaker import OPFGenerator
 
@@ -90,7 +91,7 @@ class Chapter:
         else:
             return urlopen("https://wanderinginn.com/" + self.url, timeout=5)
 
-    def save(self, stream=sys.stdout, strip_color=False, image_path="./images"):
+    def save(self, stream=sys.stdout, strip_color=False, image_path="./images", kindle=False):
         p = self.get_page()
         page = BeautifulSoup(p, "lxml")
 
@@ -126,6 +127,25 @@ class Chapter:
                     span.insert(0, f"<{color}|")
                     span.append(f"|{color}>")
                     span.unwrap()  # bs4 method for replaceWithChildren
+
+        if kindle:
+            grey_color = '#545454;'
+            margin = 'margin: 2em 0 2em 0;'
+            # Change colored text to grey
+            # and add extra spacing around colored text
+            for span in contents.find_all('span'):
+                if 'color' in str(span):
+                    styles = parseStyle(span['style'])
+                    styles['color'] = grey_color
+                    span['style'] = styles.cssText
+                    span.find_parent("p")['style'] = margin,
+            # Remove empty paragraphs (kindle gives extra spacing when compared with official ve:wrsions
+            # Adds extra spacing around separators ('—-')
+            for pg in contents.find_all('p'):
+                if len(pg.get_text(strip=True)) == 0:
+                    pg.extract()
+                if '—-' == pg.get_text(strip=True):
+                    pg['style'] = margin
 
         # Download and replace image urls with local references:
         for img in contents.find_all("img"):
@@ -225,6 +245,11 @@ def parse_args():
             "Chapter(s) to get for ebook (default: all; if volume specified, default is"
             " all in volume(s) specified))"
         ),
+    )    
+    parser.add_argument("--fmt-kindle",
+        dest="kindle",
+        action="store_true",
+        help="If true, removes excess spacing and changes all font colors to a lighter grey that renders on kindle"
     )
 
     # Default output: all content in a single book
@@ -337,6 +362,7 @@ def get_book(
     build_dir="./build",
     title="The Wandering Inn",
     subtitle=None,
+    kindle=False,
 ):
     if index is None:
         index = get_index()
@@ -375,7 +401,7 @@ def get_book(
         if not os.path.isfile(filename):
             try:
                 with codecs.open(filename, "w", encoding="utf-8") as fh:
-                    ch.save(stream=fh, strip_color=strip_color, image_path=image_path)
+                    ch.save(stream=fh, strip_color=strip_color, image_path=image_path, kindle=kindle)
             except URLError as err:
                 os.unlink(filename)
                 raise err
@@ -434,6 +460,7 @@ def main():
                 index=[chapter],
                 build_dir=args.build_dir,
                 strip_color=args.strip_color,
+                kindle=args.kindle,
             )
             gen = OPFGenerator(chapter_data)
             gen.createEBookFile(
@@ -448,6 +475,7 @@ def main():
                 index=filter(lambda c: c.volume == volume, index),
                 build_dir=args.build_dir,
                 strip_color=args.strip_color,
+                kindle=args.kindle,
             )
             gen = OPFGenerator(volume_data)
             gen.createEBookFile(
@@ -460,6 +488,7 @@ def main():
             build_dir=args.build_dir,
             title=args.title,
             strip_color=args.strip_color,
+            kindle=args.kindle
         )
         gen = OPFGenerator(ebook_data)
         gen.createEBookFile(os.path.join(args.build_dir, f'{ebook_data["title"]}.epub'))
